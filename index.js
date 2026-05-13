@@ -30,9 +30,28 @@ app.use(cors({
 app.use(express.json());
 
 // Database Connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ MongoDB Connected'))
-  .catch(err => console.error('❌ MongoDB Connection Error:', err));
+// Cached across Lambda warm invocations — connect once, reuse.
+let _dbReady = null;
+const connectDB = () => {
+  if (_dbReady) return _dbReady;
+  _dbReady = mongoose.connect(process.env.MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 10000,
+  })
+    .then(() => console.log('✅ MongoDB Connected'))
+    .catch(err => { _dbReady = null; console.error('❌ MongoDB Connection Error:', err); throw err; });
+  return _dbReady;
+};
+
+// Ensure DB is connected before any request is processed
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    res.status(503).json({ error: 'Database unavailable', detail: err.message });
+  }
+});
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
